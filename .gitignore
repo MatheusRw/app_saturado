@@ -16,3 +16,5 @@ __pycache__/
 # Ignorar arquivos de IDE
 .vscode/
 .idea/
+
+nuvem_fiscal.txt

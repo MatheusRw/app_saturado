@@ -1,41 +1,63 @@
 from pydantic import BaseModel
-from typing import Literal
+from typing import Literal, Any
 
 
 class ResultadoBusca(BaseModel):
-    # Identificação da busca
     cnae: str
     municipio: str
     raio_km: int
-
-    # Contagens
     total_empresas: int
     empresas_ativas: int
     abertas_ultimo_ano: int
-
-    # Score e status
-    score: int  # 0–100
+    score: int
     status: Literal["pouco_explorado", "moderado", "saturado"]
-    status_label: str  # "Mercado com espaço" etc.
-
-    # Texto de insight gerado pelo algoritmo
+    status_label: str
     insight: str
 
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "cnae": "9602501",
-                "municipio": "Niteroi",
-                "raio_km": 3,
-                "total_empresas": 87,
-                "empresas_ativas": 71,
-                "abertas_ultimo_ano": 19,
-                "score": 78,
-                "status": "saturado",
-                "status_label": "Mercado saturado",
-                "insight": "Alta concentração de barbearias no raio selecionado. Considere um nicho específico ou localização alternativa.",
-            }
-        }
+
+class InsightItem(BaseModel):
+    titulo: str
+    texto: str
+    tag: str
+
+
+class SwotData(BaseModel):
+    forcas: list[str]
+    fraquezas: list[str]
+    oportunidades: list[str]
+    ameacas: list[str]
+    insights: list[InsightItem]
+    recomendacao: str
+
+
+class EmpresaItem(BaseModel):
+    cnpj: str
+    nome: str
+    bairro: str
+    municipio: str
+    ativa: bool
+    situacao: str
+    ano_abertura: int | None
+    porte: str
+    capital_social: float
+
+
+class Relatorio(BaseModel):
+    cnae: str
+    municipio: str
+    raio_km: int
+    total_empresas: int
+    empresas_ativas: int
+    abertas_ultimo_ano: int
+    score: int
+    status: Literal["pouco_explorado", "moderado", "saturado"]
+    status_label: str
+    por_bairro: dict[str, int]
+    por_ano: dict[str, int]
+    por_porte: dict[str, int]
+    swot: SwotData
+    empresas: list[EmpresaItem]
+    dados_reais: bool
 
 
 class ErroResposta(BaseModel):
