@@ -6,8 +6,14 @@ um relatório contextualizado e acionável.
 
 import httpx
 import json
+import os
 from typing import Any
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
 CLAUDE_MODEL = "claude-sonnet-4-20250514"
@@ -79,7 +85,11 @@ Use os dados reais para embasar cada ponto. Seja específico sobre {municipio}, 
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
                 CLAUDE_API_URL,
-                headers={"Content-Type": "application/json"},
+                headers={
+                    "Content-Type": "application/json",
+                    "x-api-key": os.environ.get("ANTHROPIC_API_KEY", ""),
+                    "anthropic-version": "2023-06-01",
+                },
                 json={
                     "model": CLAUDE_MODEL,
                     "max_tokens": 1500,

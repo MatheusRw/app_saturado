@@ -3,6 +3,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from services.brasil_api import buscar_empresas_por_cnae, resolver_cnae
 from services.cnpjws import buscar_empresas_cnpjws, agregar_dados
 from services.score import calcular_score
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 from services.swot import gerar_swot
 from models import ResultadoBusca, Relatorio, ErroResposta
 import os
