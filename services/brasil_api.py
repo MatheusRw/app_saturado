@@ -35,6 +35,20 @@ CNAE_MAP: dict[str, str] = {
     "odonto":      "8630503",
 }
 
+# Nomes legíveis para exibição no insight
+CNAE_NOME: dict[str, str] = {
+    "9602501": "Barbearia",
+    "9602502": "Salão de beleza",
+    "5611201": "Restaurante",
+    "5611203": "Lanchonete",
+    "9313100": "Academia",
+    "4771701": "Farmácia",
+    "4789004": "Pet shop",
+    "1091101": "Padaria",
+    "1091102": "Confeitaria",
+    "8630503": "Clínica odontológica",
+}
+
 BRASIL_API_BASE = "https://brasilapi.com.br/api"
 
 
@@ -70,10 +84,12 @@ async def buscar_empresas_por_cnae(cnae: str, municipio: str) -> dict[str, Any]:
     # Em produção: substituir por query real ao CNPJ.ws
     contagens = _estimar_contagens(codigo_cnae=codigo_cnae, municipio=municipio)
 
+    nome_legivel = CNAE_NOME.get(codigo_cnae) or cnae_valido.get("descricao") or cnae
+
     return {
         "cnae_input": cnae,
         "cnae_codigo": codigo_cnae,
-        "cnae_descricao": cnae_valido.get("descricao", cnae),
+        "cnae_descricao": nome_legivel,
         "municipio": municipio,
         **contagens,
     }
