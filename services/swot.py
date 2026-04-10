@@ -44,26 +44,28 @@ async def gerar_swot(
     porte_str = ", ".join(f"{p}: {n}" for p, n in por_porte.items())
     tendencia_str = " → ".join(f"{a}: {n}" for a, n in list(por_ano.items())[-5:])
 
+    # Dados exclusivos do Google Places
+    rating_medio = dados.get("rating_medio")
+    total_avaliacoes = dados.get("total_avaliacoes", 0)
+    rating_str = f"{rating_medio}/5 ({total_avaliacoes} avaliações no total)" if rating_medio else "Não disponível"
+
     prompt = f"""Você é um analista de mercado especialista em pequenos negócios brasileiros.
 
 Analise os dados reais abaixo e gere uma análise SWOT detalhada e acionável para quem quer abrir um(a) {nicho} em {municipio}.
+Os dados foram coletados do Google Maps em tempo real.
 
-DADOS REAIS DO MERCADO:
-- Total de estabelecimentos mapeados: {total}
-- Ativos: {ativas} ({round(ativas/max(total,1)*100)}%)
-- Taxa de mortalidade: {taxa_mortalidade}%
-- Novos no último ano: {abertas}
+DADOS REAIS DO MERCADO (Google Maps):
+- Total de estabelecimentos no raio de {raio_km}km: {total}
+- Ativos/operacionais: {ativas} ({round(ativas/max(total,1)*100)}%)
 - Score de saturação: {score}/100 ({status})
-- Raio analisado: {raio_km}km
+- Avaliação média dos concorrentes: {rating_str}
 
-DISTRIBUIÇÃO GEOGRÁFICA (por bairro):
+CONCENTRAÇÃO POR BAIRRO:
 {bairros_str or "Dados não disponíveis"}
 
-DISTRIBUIÇÃO POR PORTE:
-{porte_str or "Dados não disponíveis"}
-
-TENDÊNCIA DE ABERTURAS (por ano):
-{tendencia_str or "Dados não disponíveis"}
+Use esses dados para identificar bairros com menos concorrência.
+Se avaliação média for baixa (< 3.5), há oportunidade de entrada com qualidade superior.
+Se avaliação média for alta (> 4.2), o mercado é exigente — diferenciação é essencial.
 
 Responda APENAS com um JSON válido, sem markdown, sem explicações, no formato:
 {{
@@ -79,7 +81,7 @@ Responda APENAS com um JSON válido, sem markdown, sem explicações, no formato
   "recomendacao": "Uma frase direta e acionável para quem quer entrar nesse mercado agora."
 }}
 
-Use os dados reais para embasar cada ponto. Seja específico sobre {municipio}, sobre os bairros com menos concorrência, sobre o mix de porte dos concorrentes."""
+Seja específico sobre {municipio} e os bairros identificados. Mencione a avaliação média quando relevante."""
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:

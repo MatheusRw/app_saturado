@@ -1,25 +1,23 @@
 from pydantic import BaseModel
-from typing import Literal, Any
+from typing import Literal, Optional
 
-
+# ── Busca rápida (/analise) ───────────────────────────────────────────────────
 class ResultadoBusca(BaseModel):
     cnae: str
     municipio: str
     raio_km: int
     total_empresas: int
     empresas_ativas: int
-    abertas_ultimo_ano: int
     score: int
     status: Literal["pouco_explorado", "moderado", "saturado"]
     status_label: str
     insight: str
 
-
+# ── Relatório completo (/relatorio) ──────────────────────────────────────────
 class InsightItem(BaseModel):
     titulo: str
     texto: str
     tag: str
-
 
 class SwotData(BaseModel):
     forcas: list[str]
@@ -29,18 +27,17 @@ class SwotData(BaseModel):
     insights: list[InsightItem]
     recomendacao: str
 
-
-class EmpresaItem(BaseModel):
-    cnpj: str
+class LugarItem(BaseModel):
     nome: str
+    endereco: str
     bairro: str
-    municipio: str
+    latitude: float
+    longitude: float
     ativa: bool
-    situacao: str
-    ano_abertura: int | None
-    porte: str
-    capital_social: float
-
+    status: str
+    rating: Optional[float] = None
+    num_avaliacoes: int = 0
+    tipo: str
 
 class Relatorio(BaseModel):
     cnae: str
@@ -48,17 +45,17 @@ class Relatorio(BaseModel):
     raio_km: int
     total_empresas: int
     empresas_ativas: int
-    abertas_ultimo_ano: int
     score: int
     status: Literal["pouco_explorado", "moderado", "saturado"]
     status_label: str
     por_bairro: dict[str, int]
-    por_ano: dict[str, int]
-    por_porte: dict[str, int]
+    rating_medio: Optional[float] = None
+    total_avaliacoes: int = 0
+    lat_centro: float
+    lng_centro: float
     swot: SwotData
-    empresas: list[EmpresaItem]
-    dados_reais: bool
-
+    lugares: list[LugarItem]
+    dados_reais: bool  # sempre True agora
 
 class ErroResposta(BaseModel):
     detail: str

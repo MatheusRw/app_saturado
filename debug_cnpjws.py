@@ -1,98 +1,171 @@
 """
-Roda esse script para testar a CNPJ.ws e ver o que ela retorna.
-Execute na pasta app_saturado:
+DEBUG COMPLETO — Nuvem Fiscal
 
-    python debug_cnpjws.py
+Objetivo:
+- Validar autenticação
+- Validar parâmetros obrigatórios
+- Testar múltiplas naturezas jurídicas (uma por vez)
+- Detectar erro de quota
+- Mostrar exatamente o que está sendo enviado
+
+Execute:
+    python debug_nuvemfiscal_full.py
 """
 
 import asyncio
 import httpx
+import os
 import json
 
 BRASILAPI = "https://brasilapi.com.br/api"
-CNPJWS    = "https://publica.cnpj.ws"
+AUTH_URL  = "https://auth.nuvemfiscal.com.br/oauth/token"
+BASE_URL  = "https://api.nuvemfiscal.com.br"
+
+CNAE = "9602501"  # Barbearia
+NATUREZAS = ["2135", "2062", "2305"]  # testar uma por vez
 
 
+# ─────────────────────────────────────────
+# AUTH
+# ─────────────────────────────────────────
+async def obter_token():
+    client_id     = os.environ.get("NUVEM_FISCAL_CLIENT_ID")
+    client_secret = os.environ.get("NUVEM_FISCAL_CLIENT_SECRET")
+
+    print("\n🔐 Testando autenticação...")
+
+    if not client_id or not client_secret:
+        print("❌ Credenciais não encontradas no .env")
+        return None
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.post(
+            AUTH_URL,
+            data={
+                "grant_type": "client_credentials",
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "scope": "cnpj",
+            },
+        )
+
+        print("Status Auth:", resp.status_code)
+
+        if resp.status_code == 200:
+            token = resp.json().get("access_token")
+            print("✅ Token OK")
+            return token
+        else:
+            print("❌ Erro autenticação:")
+            print(resp.text[:300])
+            return None
+
+
+# ─────────────────────────────────────────
+# IBGE
+# ─────────────────────────────────────────
+async def get_ibge():
+    print("\n🌍 Buscando IBGE de Niterói...")
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(f"{BRASILAPI}/ibge/municipios/v1/RJ")
+
+        if resp.status_code != 200:
+            print("❌ Erro BrasilAPI")
+            return None
+
+        municipios = resp.json()
+        niteroi = next((m for m in municipios if "niter" in m["nome"].lower()), None)
+
+        if not niteroi:
+            print("❌ Não encontrou Niterói")
+            return None
+
+        cod = niteroi["codigo_ibge"]
+        print(f"✅ IBGE: {cod}")
+        return cod
+
+
+# ─────────────────────────────────────────
+# TESTE PRINCIPAL
+# ─────────────────────────────────────────
 async def testar():
     print("=" * 60)
-    print("PASSO 1 — Buscando código IBGE de Niterói via BrasilAPI")
+    print("DEBUG COMPLETO — NUVEM FISCAL")
     print("=" * 60)
+
+    cod_ibge = await get_ibge()
+    if not cod_ibge:
+        return
+
+    token = await obter_token()
+    if not token:
+        return
+
+    headers = {"Authorization": f"Bearer {token}"}
+
+    print("\n🚀 Iniciando testes...\n")
 
     async with httpx.AsyncClient(timeout=10.0) as client:
 
-        # Passo 1: código IBGE
-        url_ibge = f"{BRASILAPI}/ibge/municipios/v1/RJ"
-        resp = await client.get(url_ibge)
-        print(f"Status: {resp.status_code}")
+        for natureza in NATUREZAS:
+            print("=" * 60)
+            print(f"🔎 Testando natureza_juridica = {natureza}")
+            print("=" * 60)
 
-        if resp.status_code == 200:
-            municipios = resp.json()
-            niteroi = next((m for m in municipios if "niter" in m["nome"].lower()), None)
-            if niteroi:
-                cod = niteroi["codigo_ibge"]
-                print(f"✅ Encontrado: {niteroi['nome']} → código IBGE: {cod}")
-            else:
-                print("❌ Niterói não encontrado")
-                return
-        else:
-            print(f"❌ Erro BrasilAPI: {resp.text[:200]}")
-            return
+            params = {
+                "cnae_principal": CNAE,
+                "municipio": cod_ibge,
+                "natureza_juridica": natureza,
+                "$top": 5,
+                "$skip": 0,
+            }
 
-        print()
-        print("=" * 60)
-        print("PASSO 2 — Buscando empresas CNAE 9602501 (barbearia) em Niterói")
-        print("=" * 60)
+            print("\n📤 PARAMS ENVIADOS:")
+            print(json.dumps(params, indent=2))
 
-        # Passo 2: empresas por município + CNAE
-        url_emp = f"{CNPJWS}/municipio/{cod}/empresas"
-        params = {"pagina": 1, "atividade_principal": "9602501"}
+            resp = await client.get(
+                f"{BASE_URL}/cnpj",
+                params=params,
+                headers=headers
+            )
 
-        resp2 = await client.get(url_emp, params=params)
-        print(f"Status: {resp2.status_code}")
-        print(f"URL chamada: {resp2.url}")
+            print("\n🌐 URL FINAL:")
+            print(resp.url)
 
-        if resp2.status_code == 200:
-            data = resp2.json()
-            print(f"\nTipo retornado: {type(data)}")
-            if isinstance(data, list):
-                print(f"✅ Lista com {len(data)} empresas")
-                if data:
-                    print("\nPrimeira empresa (estrutura completa):")
-                    print(json.dumps(data[0], indent=2, ensure_ascii=False)[:1500])
-            elif isinstance(data, dict):
-                print(f"✅ Dict com chaves: {list(data.keys())}")
-                empresas = data.get("empresas") or data.get("data") or []
-                print(f"Empresas encontradas: {len(empresas)}")
+            print("\n📊 STATUS:", resp.status_code)
+
+            # ───── SUCESSO ─────
+            if resp.status_code == 200:
+                data = resp.json()
+                empresas = data.get("data", [])
+
+                print(f"\n✅ SUCESSO — {len(empresas)} empresas")
+
                 if empresas:
-                    print("\nPrimeira empresa:")
-                    print(json.dumps(empresas[0], indent=2, ensure_ascii=False)[:1500])
-                print(f"\nProxima pagina: {data.get('proxima_pagina')}")
-                print(f"\nResposta completa (primeiros 500 chars):")
-                print(json.dumps(data, ensure_ascii=False)[:500])
-        else:
-            print(f"❌ Erro CNPJ.ws: {resp2.status_code}")
-            print(resp2.text[:500])
+                    print("\n📄 Primeira empresa:")
+                    print(json.dumps(empresas[0], indent=2, ensure_ascii=False)[:1000])
 
-        print()
-        print("=" * 60)
-        print("PASSO 3 — Testando sem filtro de CNAE")
-        print("=" * 60)
+            # ───── QUOTA ─────
+            elif resp.status_code == 403:
+                print("\n🚫 ERRO DE QUOTA")
+                print(resp.text)
 
-        resp3 = await client.get(url_emp, params={"pagina": 1})
-        print(f"Status: {resp3.status_code}")
-        if resp3.status_code == 200:
-            data3 = resp3.json()
-            if isinstance(data3, list):
-                print(f"✅ {len(data3)} empresas sem filtro")
-                if data3:
-                    print("Chaves da primeira empresa:", list(data3[0].keys()))
-            elif isinstance(data3, dict):
-                print("Chaves do dict:", list(data3.keys()))
-                empresas3 = data3.get("empresas") or []
-                if empresas3:
-                    print("Chaves da primeira empresa:", list(empresas3[0].keys()))
-        else:
-            print(f"❌ {resp3.status_code}: {resp3.text[:200]}")
+                print("\n👉 SOLUÇÃO:")
+                print("- Ativar plano na Nuvem Fiscal")
+                print("- Habilitar 'cnpj-listagem'")
+                return
+
+            # ───── ERRO VALIDAÇÃO ─────
+            elif resp.status_code == 400:
+                print("\n⚠️ ERRO DE VALIDAÇÃO")
+                print(resp.text)
+
+            # ───── OUTROS ─────
+            else:
+                print("\n❌ ERRO DESCONHECIDO")
+                print(resp.text[:500])
 
 
+# ─────────────────────────────────────────
 asyncio.run(testar())
