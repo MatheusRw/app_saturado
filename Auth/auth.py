@@ -3,7 +3,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
-from .database import SessionLocal, User
+from Databases.databases import User, SessionLocal
 import os
 
 SECRET_KEY = os.environ.get("SECRET_KEY", "sua-chave-secreta-aqui-mude-em-producao")

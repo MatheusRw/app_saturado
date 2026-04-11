@@ -1,12 +1,16 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from services.google_places import buscar_por_google_places, agregar_dados_places, geocodificar_municipio
 from services.score import calcular_score
 from services.swot import gerar_swot
 from models import ResultadoBusca, Relatorio, LugarItem, SwotData, InsightItem, ErroResposta
 import os
-from payments import payments,webhooks,auth
 
+# Import dos módulos de pagamento e autenticação
+from payments.payments import router as payments_router
+from payments.webhooks import router as webhooks_router
+from Auth.auth import check_premium_access, create_access_token
+from Databases.databases import User, SessionLocal
 
 try:
     from dotenv import load_dotenv
@@ -14,17 +18,37 @@ try:
 except ImportError:
     pass
 
-app = FastAPI(title="Saturado API", description="Análise de saturação via Google Places", version="0.4.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET"], allow_headers=["*"])
+app = FastAPI(
+    title="Saturado API",
+    description="Análise de saturação de mercado via Google Places",
+    version="0.4.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
+
+# Incluir routers de pagamento
+app.include_router(payments_router)
+app.include_router(webhooks_router)
+
+
+# ============================================================
+# ROTAS PÚBLICAS
+# ============================================================
 
 @app.get("/", tags=["status"])
 def raiz():
     return {"status": "ok", "app": "Saturado API (Google Places)", "versao": "0.4.0"}
 
+
 @app.get("/analise", response_model=ResultadoBusca, tags=["análise"])
 async def analisar_mercado(
-    cnae: str = Query(...),
-    municipio: str = Query(...),
+    cnae: str = Query(..., description="Segmento (ex: barbearia)"),
+    municipio: str = Query(..., description="Nome do município"),
     raio_km: int = Query(3, ge=1, le=50),
 ):
     api_key = os.environ.get("GOOGLE_PLACES_API_KEY")
@@ -40,17 +64,75 @@ async def analisar_mercado(
         "municipio": municipio,
         "total_empresas": agregado["total_empresas"],
         "empresas_ativas": agregado["empresas_ativas"],
-        "abertas_ultimo_ano": 0,  # não usado
+        "abertas_ultimo_ano": 0,
     }
     resultado = calcular_score(dados=score_input, raio_km=raio_km)
     return resultado
 
+
+# ============================================================
+# ROTAS DE AUTENTICAÇÃO
+# ============================================================
+
+@app.post("/login")
+async def login(email: str, password: str):
+    """Login do usuário - retorna token JWT"""
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            raise HTTPException(status_code=401, detail="Email ou senha inválidos")
+        
+        # Verificar senha (aqui você pode usar hash, ex: passlib)
+        if password != "senha_temporaria":  # TODO: implementar hash de senha
+            raise HTTPException(status_code=401, detail="Email ou senha inválidos")
+        
+        access_token = create_access_token(data={"sub": user.email})
+        return {"access_token": access_token, "token_type": "bearer", "user": {"email": user.email, "status": user.subscription_status}}
+    finally:
+        db.close()
+
+
+@app.post("/register")
+async def register(email: str, password: str):
+    """Registro de novo usuário"""
+    db = SessionLocal()
+    try:
+        existing = db.query(User).filter(User.email == email).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Email já cadastrado")
+        
+        # TODO: hash da senha
+        user = User(
+            email=email,
+            hashed_password=password,  # temporário - use hash em produção
+            subscription_status="FREE",
+            is_active=True
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        
+        return {"message": "Usuário criado com sucesso", "email": user.email}
+    finally:
+        db.close()
+
+
+# ============================================================
+# ROTA PROTEGIDA - Requer assinatura PREMIUM
+# ============================================================
+
 @app.get("/relatorio", response_model=Relatorio, tags=["relatório"])
 async def gerar_relatorio(
-    cnae: str = Query(...),
-    municipio: str = Query(...),
+    cnae: str = Query(..., description="Segmento (ex: barbearia)"),
+    municipio: str = Query(..., description="Nome do município"),
     raio_km: int = Query(3, ge=1, le=50),
+    user: User = Depends(check_premium_access)  # Proteção: apenas usuários PRO
 ):
+    """
+    Relatório completo com dados do Google Maps.
+    🔒 REQUER ASSINATURA PREMIUM
+    """
     api_key = os.environ.get("GOOGLE_PLACES_API_KEY")
     if not api_key:
         raise HTTPException(status_code=503, detail="API key do Google Places não configurada")
@@ -72,7 +154,7 @@ async def gerar_relatorio(
     }
     resultado = calcular_score(dados=score_input, raio_km=raio_km)
 
-    # Gera SWOT (pode ser adaptado para não precisar de dados de ano)
+    # Gera SWOT
     try:
         swot_raw = await gerar_swot(
             nicho=cnae,
@@ -114,27 +196,3 @@ async def gerar_relatorio(
         lugares=lugares_modelo,
         dados_reais=True,
     )
-
-
-# Inclua os routers
-app.include_router(payments.router)
-app.include_router(webhooks.router)
-
-# Rota de login (exemplo simples)
-@app.post("/login")
-async def login(email: str, password: str):
-    # Implemente sua lógica de autenticação
-    # Verifique email/senha no banco
-    access_token = auth.create_access_token(data={"sub": email})
-    return {"access_token": access_token, "token_type": "bearer"}
-
-# Proteja a rota de relatório com verificação de premium
-@app.get("/relatorio")
-async def gerar_relatorio(
-    cnae: str = Query(...),
-    municipio: str = Query(...),
-    raio_km: int = Query(3),
-    user: User = Depends(auth.check_premium_access)  # ← ADICIONE ISSO
-):
-    # Resto do código existente...
-    pass
