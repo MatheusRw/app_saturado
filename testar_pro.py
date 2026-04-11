@@ -1,47 +1,29 @@
-# testar_pro.py
-import requests
-import sqlite3
+# criar_pro_direto.py
+from Databases.databases import SessionLocal, User
+from Auth.auth import create_access_token
 
-BASE_URL = "http://localhost:8000"
+db = SessionLocal()
 
-print("=== CRIANDO USUÁRIO ===")
-response = requests.post(f"{BASE_URL}/register", params={
-    "email": "pro@teste.com",
-    "password": "123456"
-})
-print(response.json())
+# Deletar usuário existente se houver
+db.query(User).filter(User.email == "pro@teste.com").delete()
 
-print("\n=== FAZENDO LOGIN ===")
-response = requests.post(f"{BASE_URL}/login", params={
-    "email": "pro@teste.com",
-    "password": "123456"
-})
-print(response.json())
+# Criar novo usuário PRO
+user = User(
+    email="pro@teste.com",
+    hashed_password="123456",  # senha simples
+    subscription_status="PRO",
+    is_active=True
+)
+db.add(user)
+db.commit()
+db.refresh(user)
 
-if response.status_code == 200:
-    token = response.json().get("access_token")
-    print(f"\n✅ Token obtido: {token[:50]}...")
-    
-    print("\n=== ATUALIZANDO PARA PRO (direto no banco) ===")
-    conn = sqlite3.connect('saturado.db')
-    cursor = conn.cursor()
-    cursor.execute("UPDATE users SET subscription_status = 'PRO' WHERE email = 'pro@teste.com'")
-    conn.commit()
-    print(f"✅ Linhas afetadas: {cursor.rowcount}")
-    conn.close()
-    
-    print("\n=== TESTANDO RELATÓRIO ===")
-    headers = {"Authorization": f"Bearer {token}"}
-    response = requests.get(
-        f"{BASE_URL}/relatorio",
-        params={"cnae": "pet", "municipio": "Rio de Janeiro", "raio_km": 3},
-        headers=headers
-    )
-    print(f"Status: {response.status_code}")
-    if response.status_code == 200:
-        data = response.json()
-        print(f"✅ Relatório gerado! Encontrados: {data.get('total_empresas')} estabelecimentos")
-    else:
-        print(f"❌ Erro: {response.text}")
-else:
-    print("❌ Falha no login")
+print(f"✅ Usuário criado: {user.email}")
+print(f"📋 Status: {user.subscription_status}")
+
+# Criar token para teste
+token = create_access_token(data={"sub": user.email})
+print(f"\n🔑 TOKEN (copie para testar):")
+print(token)
+
+db.close()

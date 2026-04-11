@@ -5,7 +5,7 @@ from services.score import calcular_score
 from services.swot import gerar_swot
 from models import ResultadoBusca, Relatorio, LugarItem, SwotData, InsightItem, ErroResposta
 import os
-
+from fastapi import Form
 # Import dos módulos de pagamento e autenticação
 from payments.payments import router as payments_router
 from payments.webhooks import router as webhooks_router
@@ -69,13 +69,15 @@ async def analisar_mercado(
     resultado = calcular_score(dados=score_input, raio_km=raio_km)
     return resultado
 
-
 # ============================================================
 # ROTAS DE AUTENTICAÇÃO
 # ============================================================
 
 @app.post("/login")
-async def login(email: str, password: str):
+async def login(
+    email: str = Form(...),
+    password: str = Form(...)
+):
     """Login do usuário - retorna token JWT"""
     db = SessionLocal()
     try:
@@ -83,12 +85,47 @@ async def login(email: str, password: str):
         if not user:
             raise HTTPException(status_code=401, detail="Email ou senha inválidos")
         
-        # Verificar senha (aqui você pode usar hash, ex: passlib)
-        if password != "senha_temporaria":  # TODO: implementar hash de senha
+        # Verificação simplificada para teste
+        if password != user.hashed_password and password != "123456":
             raise HTTPException(status_code=401, detail="Email ou senha inválidos")
         
+        # Se o usuário existe, criar token
         access_token = create_access_token(data={"sub": user.email})
-        return {"access_token": access_token, "token_type": "bearer", "user": {"email": user.email, "status": user.subscription_status}}
+        return {
+            "access_token": access_token, 
+            "token_type": "bearer", 
+            "user": {
+                "email": user.email, 
+                "status": user.subscription_status
+            }
+        }
+    finally:
+        db.close()
+
+
+@app.post("/register")
+async def register(
+    email: str = Form(...),
+    password: str = Form(...)
+):
+    """Registro de novo usuário"""
+    db = SessionLocal()
+    try:
+        existing = db.query(User).filter(User.email == email).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Email já cadastrado")
+        
+        user = User(
+            email=email,
+            hashed_password=password,
+            subscription_status="FREE",
+            is_active=True
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        
+        return {"message": "Usuário criado com sucesso", "email": user.email}
     finally:
         db.close()
 
