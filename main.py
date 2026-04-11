@@ -5,6 +5,8 @@ from services.score import calcular_score
 from services.swot import gerar_swot
 from models import ResultadoBusca, Relatorio, LugarItem, SwotData, InsightItem, ErroResposta
 import os
+from payments import payments,webhooks,auth
+
 
 try:
     from dotenv import load_dotenv
@@ -112,3 +114,27 @@ async def gerar_relatorio(
         lugares=lugares_modelo,
         dados_reais=True,
     )
+
+
+# Inclua os routers
+app.include_router(payments.router)
+app.include_router(webhooks.router)
+
+# Rota de login (exemplo simples)
+@app.post("/login")
+async def login(email: str, password: str):
+    # Implemente sua lógica de autenticação
+    # Verifique email/senha no banco
+    access_token = auth.create_access_token(data={"sub": email})
+    return {"access_token": access_token, "token_type": "bearer"}
+
+# Proteja a rota de relatório com verificação de premium
+@app.get("/relatorio")
+async def gerar_relatorio(
+    cnae: str = Query(...),
+    municipio: str = Query(...),
+    raio_km: int = Query(3),
+    user: User = Depends(auth.check_premium_access)  # ← ADICIONE ISSO
+):
+    # Resto do código existente...
+    pass
