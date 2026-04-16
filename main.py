@@ -11,6 +11,7 @@ from payments.payments import router as payments_router
 from payments.webhooks import router as webhooks_router
 from Auth.auth import check_premium_access, create_access_token
 from Databases.databases import User, SessionLocal
+from services.ia_insights import recomendar_melhor_rua_com_ia
 
 try:
     from dotenv import load_dotenv
@@ -233,3 +234,90 @@ async def gerar_relatorio(
         lugares=lugares_modelo,
         dados_reais=True,
     )
+
+
+#============================================================
+# ROTA DE RECOMENDAÇÃO ESTATÍSTICA
+# ============================================================
+
+@app.get("/recomendar")
+async def recomendar_local(
+    cnae: str = Query(..., description="Segmento (ex: barbearia)"),
+    municipio: str = Query(..., description="Nome do município"),
+    raio_km: int = Query(3, ge=1, le=10),
+):
+    """Recomenda a melhor RUA para abrir um negócio"""
+    api_key = os.environ.get("GOOGLE_PLACES_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="API key do Google Places não configurada")
+    
+    lugares = await buscar_por_google_places(
+        nicho=cnae, 
+        municipio=municipio, 
+        raio_km=raio_km, 
+        max_resultados=100
+    )
+    
+    if not lugares:
+        return {
+            "cnae": cnae,
+            "municipio": municipio,
+            "raio_km": raio_km,
+            "encontrados": 0,
+            "mensagem": f"Nenhum estabelecimento encontrado para {cnae} em {municipio}."
+        }
+    
+    from services.recomendacao import recomendar_melhor_rua
+    
+    resultado = await recomendar_melhor_rua(
+        nicho=cnae,
+        lugares=lugares
+    )
+    
+    return {
+        "cnae": cnae,
+        "municipio": municipio,
+        "raio_km": raio_km,
+        **resultado
+    }
+
+@app.get("/recomendar")
+async def recomendar_local(
+    cnae: str = Query(..., description="Segmento (ex: barbearia)"),
+    municipio: str = Query(..., description="Nome do município"),
+    raio_km: int = Query(3, ge=1, le=10),
+):
+    """Recomenda a melhor RUA para abrir um negócio (Estatística + IA)"""
+    api_key = os.environ.get("GOOGLE_PLACES_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="API key do Google Places não configurada")
+    
+    lugares = await buscar_por_google_places(
+        nicho=cnae, 
+        municipio=municipio, 
+        raio_km=raio_km, 
+        max_resultados=100
+    )
+    
+    if not lugares:
+        return {
+            "cnae": cnae,
+            "municipio": municipio,
+            "raio_km": raio_km,
+            "encontrados": 0,
+            "mensagem": f"Nenhum estabelecimento encontrado para {cnae} em {municipio}."
+        }
+    
+    # Versão híbrida: estatística + IA
+    resultado = await recomendar_melhor_rua_com_ia(
+        nicho=cnae,
+        lugares=lugares,
+        cidade=municipio
+    )
+    
+    return {
+        "cnae": cnae,
+        "municipio": municipio,
+        "raio_km": raio_km,
+        **resultado
+    }
