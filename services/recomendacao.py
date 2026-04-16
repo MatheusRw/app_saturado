@@ -8,14 +8,52 @@ import re
 from collections import defaultdict
 import math
 
-# Estratégias por segmento
+# ============================================================
+# CONFIGURAÇÕES E CONSTANTES
+# ============================================================
+
+SHOPPING_KEYWORDS = ['shopping', 'norte shopping', 'sul shopping', 'shopping center', 'shopping centre', 'galeria', 'center', 'mall']
+
+def is_shopping_location(nome: str) -> bool:
+    """Verifica se o local é um shopping center"""
+    nome_lower = nome.lower()
+    return any(keyword in nome_lower for keyword in SHOPPING_KEYWORDS)
+
+def extrair_nome_rua(endereco: str) -> str:
+    """Extrai o nome da rua/avenida do endereço completo, identificando shoppings"""
+    if not endereco:
+        return "Endereço não informado"
+    
+    endereco_lower = endereco.lower()
+    
+    # Detectar shoppings
+    if any(s in endereco_lower for s in SHOPPING_KEYWORDS):
+        partes = endereco.split(',')
+        if len(partes) >= 2:
+            bairro = partes[1].strip()
+            return f"📍 {bairro} (evitar shopping)"
+        return "⚠️ Shopping Center (evitar)"
+    
+    # Extrair rua normal
+    partes = endereco.split(',')
+    if partes:
+        rua = partes[0].strip()
+        rua = re.sub(r'^(R\.|Rua|Av\.|Avenida|Travessa|Tr\.|Alameda|Al\.|Praça|Pç\.)\s*', '', rua, flags=re.IGNORECASE)
+        return rua.strip()
+    
+    return endereco[:40]
+
+# ============================================================
+# ESTRATÉGIAS POR SEGMENTO
+# ============================================================
+
 ESTRATEGIAS = {
     "restaurante": {
         "tipo": "aglomerar",
         "peso_densidade": -0.3,
         "peso_qualidade": 0.4,
         "peso_demanda": 0.5,
-        "densidade_ideal": 3.0,  # concorrentes por km de rua
+        "densidade_ideal": 3.0,
         "descricao": "Restaurantes rendem mais em ruas movimentadas com outros restaurantes."
     },
     "barbearia": {
@@ -85,23 +123,9 @@ DEFAULT_ESTRATEGIA = {
     "descricao": "Análise baseada em densidade e demanda local."
 }
 
-
-def extrair_nome_rua(endereco: str) -> str:
-    """Extrai o nome da rua/avenida do endereço completo"""
-    if not endereco:
-        return "Endereço não informado"
-    
-    # Remove número, complementos e CEP
-    # Exemplo: "R. São Joaquim, 253 - Cachambi, Rio de Janeiro - RJ, 20770-000"
-    partes = endereco.split(',')
-    if partes:
-        rua = partes[0].strip()
-        # Remove palavras como "Rua", "Av.", "Avenida", "Travessa", etc
-        rua = re.sub(r'^(R\.|Rua|Av\.|Avenida|Travessa|Tr\.|Alameda|Al\.|Praça|Pç\.)\s*', '', rua, flags=re.IGNORECASE)
-        return rua.strip()
-    
-    return endereco[:40]
-
+# ============================================================
+# CÁLCULO DE OPORTUNIDADE POR RUA
+# ============================================================
 
 def calcular_oportunidade_rua(
     nome_rua: str,
@@ -110,45 +134,55 @@ def calcular_oportunidade_rua(
 ) -> Dict:
     """
     Calcula o Índice de Oportunidade para uma rua específica.
-    
-    Fatores considerados:
-    1. Densidade linear (concorrentes por trecho - estimado)
-    2. Demanda total (avaliações acumuladas)
-    3. Qualidade média (espaço para entrada com qualidade superior)
-    4. Distância média entre concorrentes (estimativa)
     """
+    # VALIDAÇÃO ESPECIAL: Shopping Center
+    if is_shopping_location(nome_rua):
+        qtd = len(concorrentes)
+        demanda_total = sum(c.get("num_avaliacoes", 0) for c in concorrentes)
+        notas = [c.get("rating", 3.0) for c in concorrentes if c.get("rating")]
+        nota_media = sum(notas) / len(notas) if notas else 3.0
+        
+        return {
+            "rua": nome_rua,
+            "score": 15,
+            "emoji": "🏬",
+            "concorrentes": qtd,
+            "densidade_estimada": round(qtd / 0.5, 1),
+            "demanda_total": demanda_total,
+            "nota_media": round(nota_media, 1),
+            "distancia_media_km": None,
+            "recomendacao": f"⚠️ EVITE SHOPPINGS! {nome_rua} tem concorrência oculta (dezenas de restaurantes). Score baixo: 15/100.",
+            "estrategia": estrategia["tipo"],
+            "descricao_estrategia": "Shoppings têm alta concorrência interna. Prefira ruas de fluxo natural."
+        }
+    
     if not concorrentes:
         return {
             "rua": nome_rua,
             "score": 100,
+            "emoji": "🏆",
             "concorrentes": 0,
             "densidade_estimada": 0,
             "demanda_total": 0,
             "nota_media": 0,
             "distancia_media_km": None,
-            "recomendacao": f"🏆 Rua SEM CONCORRENTES! Oportunidade rara em {nome_rua}."
+            "recomendacao": f"🏆 Rua SEM CONCORRENTES! Oportunidade rara em {nome_rua}.",
+            "estrategia": estrategia["tipo"],
+            "descricao_estrategia": estrategia["descricao"]
         }
     
     qtd = len(concorrentes)
-    
-    # 1. Densidade estimada (concorrentes por km linear)
-    # Estimativa: em média, 1 concorrente a cada 200m em ruas comerciais
-    # Quanto menor a distância entre eles, maior a densidade
-    densidade_estimada = qtd / 0.5  # ~500m de rua comercial típica
-    
-    # Score de densidade baseado na estratégia
+    densidade_estimada = qtd / 0.5
     densidade_ideal = estrategia.get("densidade_ideal", 1.0)
     
+    # Score de densidade
     if estrategia["tipo"] == "aglomerar":
-        # Quanto mais concorrentes, melhor (até um limite)
         if densidade_estimada <= densidade_ideal:
             score_densidade = 50 + (densidade_estimada / densidade_ideal) * 50
         else:
-            # Penaliza se excessivo (mais que o dobro do ideal)
             excesso = min(1.0, (densidade_estimada - densidade_ideal) / densidade_ideal)
             score_densidade = 100 - (excesso * 50)
     else:
-        # Quanto menos concorrentes, melhor
         if densidade_estimada <= densidade_ideal:
             score_densidade = 100 - (densidade_estimada / densidade_ideal) * 50
         else:
@@ -156,30 +190,26 @@ def calcular_oportunidade_rua(
     
     score_densidade = min(100, max(0, score_densidade))
     
-    # 2. Demanda (avaliações totais = proxy de fluxo de clientes)
+    # Demanda
     demanda_total = sum(c.get("num_avaliacoes", 0) for c in concorrentes)
-    # Normaliza: 500 avaliações = score 100
     score_demanda = min(100, (demanda_total / 500) * 100)
     
-    # 3. Qualidade Gap
+    # Qualidade
     notas = [c.get("rating", 3.0) for c in concorrentes if c.get("rating")]
     nota_media = sum(notas) / len(notas) if notas else 3.0
     
     if nota_media < 3.5:
-        score_qualidade = 100  # mercado com qualidade baixa = ótima oportunidade
+        score_qualidade = 100
     elif nota_media < 4.0:
         score_qualidade = 75
     elif nota_media < 4.5:
         score_qualidade = 50
     else:
-        score_qualidade = 25  # concorrência bem avaliada = difícil
+        score_qualidade = 25
     
-    # 4. Distância média estimada entre concorrentes
-    # Quanto maior o gap, melhor (espaço para se posicionar)
+    # Distância média
     if qtd >= 2:
-        # Estimativa simplificada: 500m / qtd
         distancia_media = round(0.5 / qtd, 2)
-        # Score de gap: quanto maior a distância, melhor
         if distancia_media >= 0.2:
             score_gap = 100
         elif distancia_media >= 0.1:
@@ -188,34 +218,33 @@ def calcular_oportunidade_rua(
             score_gap = 50
     else:
         distancia_media = None
-        score_gap = 100 if qtd == 0 else 80
+        score_gap = 80
     
-    # 5. Score Final ponderado
+    # Score final
     score_raw = (
         score_demanda * estrategia["peso_demanda"] +
         score_qualidade * estrategia["peso_qualidade"] +
         score_densidade * abs(estrategia["peso_densidade"]) +
-        score_gap * 0.1  # peso pequeno para gap
+        score_gap * 0.1
     )
     
-    # Normaliza para 0-100
     score = min(100, max(0, int(score_raw)))
     
-    # 6. Recomendação personalizada por rua
+    # Emoji e recomendação
     if score >= 85:
-        recomendacao = f"🔥 OPORTUNIDADE EXCELENTE! Rua {nome_rua} tem {qtd} concorrente(s) e score {score}/100."
         emoji = "🏆"
+        recomendacao = f"🔥 OPORTUNIDADE EXCELENTE! Rua {nome_rua} tem {qtd} concorrente(s) e score {score}/100."
     elif score >= 70:
-        recomendacao = f"✅ BOA OPORTUNIDADE! Rua {nome_rua} com score {score}/100."
         emoji = "📌"
+        recomendacao = f"✅ BOA OPORTUNIDADE! Rua {nome_rua} com score {score}/100."
     elif score >= 50:
-        recomendacao = f"⚠️ OPORTUNIDADE MODERADA em {nome_rua}. Score {score}/100."
         emoji = "⚖️"
+        recomendacao = f"⚠️ OPORTUNIDADE MODERADA em {nome_rua}. Score {score}/100."
     else:
-        recomendacao = f"❌ BAIXA OPORTUNIDADE em {nome_rua}. Score {score}/100. Mercado saturado."
         emoji = "🚫"
+        recomendacao = f"❌ BAIXA OPORTUNIDADE em {nome_rua}. Score {score}/100. Mercado saturado."
     
-    # Adiciona insight específico
+    # Insights adicionais
     if estrategia["tipo"] == "aglomerar" and qtd < 2:
         recomendacao += " Poucos concorrentes para um polo comercial ideal."
     elif estrategia["tipo"] == "evitar" and qtd > 3:
@@ -238,6 +267,9 @@ def calcular_oportunidade_rua(
         "descricao_estrategia": estrategia["descricao"]
     }
 
+# ============================================================
+# FUNÇÃO PRINCIPAL
+# ============================================================
 
 async def recomendar_melhor_rua(
     nicho: str,
@@ -245,13 +277,6 @@ async def recomendar_melhor_rua(
 ) -> Dict:
     """
     Função principal: recomenda a melhor rua para abrir o negócio.
-    
-    Args:
-        nicho: tipo de negócio (barbearia, restaurante, etc)
-        lugares: lista de estabelecimentos do Google Places
-    
-    Returns:
-        ranking de ruas com scores de oportunidade
     """
     if not lugares:
         return {
@@ -286,9 +311,8 @@ async def recomendar_melhor_rua(
     
     melhor = ranking[0] if ranking else None
     
-    # Adiciona bairro ao melhor resultado (para referência)
+    # Adiciona bairro ao melhor resultado
     if melhor and lugares:
-        # Tenta pegar o bairro do primeiro estabelecimento da melhor rua
         rua_nome = melhor["rua"]
         for lugar in lugares:
             if extrair_nome_rua(lugar.get("endereco", "")) == rua_nome:
@@ -300,7 +324,8 @@ async def recomendar_melhor_rua(
         "estrategia_aplicada": estrategia["tipo"],
         "descricao_estrategia": estrategia["descricao"],
         "melhor_rua": melhor,
-        "ranking": ranking[:10],  # top 10 ruas
+        "ranking": ranking[:10],
         "total_ruas_analisadas": len(ranking),
-        "total_estabelecimentos": len(lugares)
+        "total_estabelecimentos": len(lugares),
+        "usou_ia": False  # Flag para indicar que é apenas estatística
     }

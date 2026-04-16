@@ -1,116 +1,53 @@
-# services/ia_insights.py
-import re
+"""
+Camada de IA complementar - Gemini
+Adiciona insights qualitativos ao ranking estatístico do recomendacao.py
+"""
+
 import os
-import google.generativeai as genai
+import json
+import re
 from typing import List, Dict, Any
 from collections import defaultdict
 
+# IMPORTAR do recomendacao.py (evita duplicação)
+from services.recomendacao import (
+    extrair_nome_rua,
+    calcular_oportunidade_rua,
+    ESTRATEGIAS,
+    DEFAULT_ESTRATEGIA,
+    recomendar_melhor_rua
+)
+
 # Configuração da IA
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash')
-
-# Estratégias por segmento (mesma do seu recomendacao.py)
-ESTRATEGIAS = {
-    "restaurante": {"tipo": "aglomerar", "peso_densidade": -0.3, "peso_qualidade": 0.4, "peso_demanda": 0.5, "densidade_ideal": 3.0, "descricao": "Polos gastronômicos atraem mais clientes."},
-    "barbearia": {"tipo": "evitar", "peso_densidade": -0.6, "peso_qualidade": 0.3, "peso_demanda": 0.3, "densidade_ideal": 1.0, "descricao": "Melhor em ruas com baixa concorrência direta."},
-    "salao": {"tipo": "evitar", "peso_densidade": -0.6, "peso_qualidade": 0.3, "peso_demanda": 0.3, "densidade_ideal": 1.0, "descricao": "Salões de beleza se beneficiam de fidelidade local."},
-    "academia": {"tipo": "ancora", "peso_densidade": -0.7, "peso_qualidade": 0.2, "peso_demanda": 0.4, "densidade_ideal": 0.5, "descricao": "Academias funcionam como negócios-âncora."},
-    "farmacia": {"tipo": "raio_exclusivo", "peso_densidade": -0.8, "peso_qualidade": 0.1, "peso_demanda": 0.3, "densidade_ideal": 0.3, "descricao": "Farmácias precisam de raio de exclusividade."},
-    "pet": {"tipo": "cluster_residencial", "peso_densidade": -0.4, "peso_qualidade": 0.2, "peso_demanda": 0.5, "densidade_ideal": 1.5, "descricao": "Pet shops seguem densidade de pets."},
-    "padaria": {"tipo": "aglomerar", "peso_densidade": -0.2, "peso_qualidade": 0.3, "peso_demanda": 0.5, "densidade_ideal": 2.5, "descricao": "Padarias se beneficiam de fluxo."},
-    "dentista": {"tipo": "evitar", "peso_densidade": -0.7, "peso_qualidade": 0.4, "peso_demanda": 0.2, "densidade_ideal": 0.5, "descricao": "Clínicas odontológicas dependem de fidelização."}
-}
-
-DEFAULT_ESTRATEGIA = {"tipo": "evitar", "peso_densidade": -0.5, "peso_qualidade": 0.3, "peso_demanda": 0.4, "densidade_ideal": 1.0, "descricao": "Análise baseada em densidade local."}
-
-def extrair_nome_rua(endereco: str) -> str:
-    """Extrai o nome da rua do endereço completo"""
-    if not endereco:
-        return "Endereço não informado"
-    partes = endereco.split(',')
-    if partes:
-        rua = partes[0].strip()
-        rua = re.sub(r'^(R\.|Rua|Av\.|Avenida|Travessa|Tr\.|Alameda|Al\.|Praça|Pç\.)\s*', '', rua, flags=re.IGNORECASE)
-        return rua.strip()
-    return endereco[:40]
-
-def calcular_oportunidade_rua(nome_rua: str, concorrentes: List[Dict], estrategia: Dict) -> Dict:
-    """Cálculo estatístico de oportunidade por rua (MANTIDO ORIGINAL)"""
-    qtd = len(concorrentes)
-    densidade_estimada = qtd / 0.5
-    
-    densidade_ideal = estrategia.get("densidade_ideal", 1.0)
-    if estrategia["tipo"] == "aglomerar":
-        if densidade_estimada <= densidade_ideal:
-            score_densidade = 50 + (densidade_estimada / densidade_ideal) * 50
-        else:
-            excesso = min(1.0, (densidade_estimada - densidade_ideal) / densidade_ideal)
-            score_densidade = 100 - (excesso * 50)
+try:
+    import google.generativeai as genai
+    GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+    if GEMINI_API_KEY:
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        IA_DISPONIVEL = True
     else:
-        if densidade_estimada <= densidade_ideal:
-            score_densidade = 100 - (densidade_estimada / densidade_ideal) * 50
-        else:
-            score_densidade = max(0, 50 - (densidade_estimada - densidade_ideal) * 20)
-    
-    score_densidade = min(100, max(0, score_densidade))
-    
-    demanda_total = sum(c.get("num_avaliacoes", 0) for c in concorrentes)
-    score_demanda = min(100, (demanda_total / 500) * 100)
-    
-    notas = [c.get("rating", 3.0) for c in concorrentes if c.get("rating")]
-    nota_media = sum(notas) / len(notas) if notas else 3.0
-    
-    if nota_media < 3.5:
-        score_qualidade = 100
-    elif nota_media < 4.0:
-        score_qualidade = 75
-    elif nota_media < 4.5:
-        score_qualidade = 50
-    else:
-        score_qualidade = 25
-    
-    score_raw = (
-        score_demanda * estrategia["peso_demanda"] +
-        score_qualidade * estrategia["peso_qualidade"] +
-        score_densidade * abs(estrategia["peso_densidade"])
-    )
-    
-    score = min(100, max(0, int(score_raw)))
-    
-    # Geração de emoji baseado no score
-    if score >= 85:
-        emoji = "🏆"
-    elif score >= 70:
-        emoji = "📌"
-    elif score >= 50:
-        emoji = "⚖️"
-    else:
-        emoji = "🚫"
-    
-    return {
-        "rua": nome_rua,
-        "score": score,
-        "emoji": emoji,
-        "concorrentes": qtd,
-        "densidade_estimada": round(densidade_estimada, 1),
-        "nota_media": round(nota_media, 1),
-        "demanda_total": demanda_total,
-        "estrategia": estrategia["tipo"]
-    }
+        IA_DISPONIVEL = False
+        print("⚠️ GEMINI_API_KEY não configurada. IA desabilitada.")
+except ImportError:
+    IA_DISPONIVEL = False
+    print("⚠️ google-generativeai não instalado. IA desabilitada.")
+
 
 async def obter_insight_ia(ranking: List[Dict], nicho: str, cidade: str = "") -> Dict:
     """
     Usa IA (Gemini) para gerar insights complementares sobre o ranking estatístico.
     Se a IA falhar, retorna um fallback amigável.
     """
-    if not GEMINI_API_KEY:
+    if not IA_DISPONIVEL:
         return {
             "sucesso": False,
-            "analise": "IA não configurada. Análise baseada apenas em dados estatísticos.",
-            "recomendacao_final": f"Recomendamos a rua {ranking[0]['rua']} com score {ranking[0]['score']}/100."
+            "mensagem": "IA não configurada. Instale google-generativeai e configure GEMINI_API_KEY",
+            "recomendacao_final": f"Recomendamos a rua {ranking[0]['rua']} com score {ranking[0]['score']}/100." if ranking else None
         }
+    
+    if not ranking:
+        return {"sucesso": False, "mensagem": "Sem dados para análise"}
     
     top_3 = ranking[:3]
     
@@ -135,13 +72,7 @@ async def obter_insight_ia(ranking: List[Dict], nicho: str, cidade: str = "") ->
     """
     
     try:
-        # Configuração para resposta em JSON
-        model = genai.GenerativeModel('gemini-1.5-flash')
         response = await model.generate_content_async(prompt)
-        
-        # Tenta extrair JSON da resposta
-        import json
-        import re
         texto = response.text
         match = re.search(r'\{.*\}', texto, re.DOTALL)
         if match:
@@ -153,15 +84,16 @@ async def obter_insight_ia(ranking: List[Dict], nicho: str, cidade: str = "") ->
         else:
             return {
                 "sucesso": False,
-                "analise": resposta_texto,
+                "mensagem": "Resposta da IA não continha JSON válido",
                 "recomendacao_final": f"Recomendamos a rua {ranking[0]['rua']} com score {ranking[0]['score']}/100."
             }
     except Exception as e:
         return {
             "sucesso": False,
-            "analise": f"IA indisponível: {str(e)[:100]}",
+            "mensagem": f"Erro na IA: {str(e)[:100]}",
             "recomendacao_final": f"Recomendamos a rua {ranking[0]['rua']} com score {ranking[0]['score']}/100."
         }
+
 
 async def recomendar_melhor_rua_com_ia(
     nicho: str,
@@ -169,49 +101,27 @@ async def recomendar_melhor_rua_com_ia(
     cidade: str = ""
 ) -> Dict:
     """
-    Função principal híbrida: estatística + IA complementar
+    Função principal híbrida: estatística (do recomendacao.py) + IA complementar
     """
-    if not lugares:
-        return {
-            "nicho": nicho,
-            "cidade": cidade,
-            "total_estabelecimentos": 0,
-            "ranking_estatistico": [],
-            "analise_ia": None,
-            "mensagem": "Nenhum estabelecimento encontrado para análise."
-        }
+    # 1. Usa a função estatística já existente
+    resultado = await recomendar_melhor_rua(nicho=nicho, lugares=lugares)
     
-    # 1. Agrupar por rua
-    ruas_dict = defaultdict(list)
-    for lugar in lugares:
-        rua = extrair_nome_rua(lugar.get("endereco", ""))
-        ruas_dict[rua].append(lugar)
+    # 2. Adiciona flag para indicar que a IA foi usada
+    resultado["usou_ia"] = False
+    resultado["analise_ia"] = None
     
-    # 2. Estratégia do nicho
-    estrategia = ESTRATEGIAS.get(nicho.lower(), DEFAULT_ESTRATEGIA)
+    # 3. Se tem ranking, tenta adicionar insight de IA
+    if resultado.get("ranking") and len(resultado["ranking"]) > 0:
+        insight_ia = await obter_insight_ia(
+            ranking=resultado["ranking"],
+            nicho=nicho,
+            cidade=cidade
+        )
+        
+        if insight_ia.get("sucesso"):
+            resultado["usou_ia"] = True
+            resultado["analise_ia"] = insight_ia
+        else:
+            resultado["analise_ia"] = insight_ia  # mesmo com erro, mostra a mensagem
     
-    # 3. Cálculo estatístico para cada rua
-    ranking = []
-    for rua, concorrentes in ruas_dict.items():
-        resultado = calcular_oportunidade_rua(rua, concorrentes, estrategia)
-        ranking.append(resultado)
-    
-    # 4. Ordena por score (melhor primeiro)
-    ranking.sort(key=lambda x: x["score"], reverse=True)
-    
-    # 5. Gera insight complementar com IA (se disponível)
-    insight_ia = await obter_insight_ia(ranking, nicho, cidade)
-    
-    melhor = ranking[0] if ranking else None
-    
-    return {
-        "nicho": nicho,
-        "cidade": cidade,
-        "estrategia_aplicada": estrategia["tipo"],
-        "descricao_estrategia": estrategia["descricao"],
-        "total_estabelecimentos": len(lugares),
-        "total_ruas_analisadas": len(ranking),
-        "melhor_rua": melhor,
-        "ranking_estatistico": ranking[:5],
-        "analise_ia": insight_ia
-    }
+    return resultado
