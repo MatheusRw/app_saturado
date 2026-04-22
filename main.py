@@ -1,16 +1,19 @@
-from fastapi import FastAPI, HTTPException, Query, Depends
+from fastapi import FastAPI, HTTPException, Query, Depends, Form
 from fastapi.middleware.cors import CORSMiddleware
 from services.google_places import buscar_por_google_places, agregar_dados_places, geocodificar_municipio
 from services.score import calcular_score
 from services.swot import gerar_swot
 from models import ResultadoBusca, Relatorio, LugarItem, SwotData, InsightItem, ErroResposta
 import os
-from fastapi import Form
+
 # Import dos módulos de pagamento e autenticação
 from payments.payments import router as payments_router
 from payments.webhooks import router as webhooks_router
 from Auth.auth import check_premium_access, create_access_token
 from Databases.databases import User, SessionLocal
+
+# Import dos serviços de recomendação
+from services.recomendacao import recomendar_melhor_rua
 from services.ia_insights import recomendar_melhor_rua_com_ia
 
 try:
@@ -70,6 +73,7 @@ async def analisar_mercado(
     resultado = calcular_score(dados=score_input, raio_km=raio_km)
     return resultado
 
+
 # ============================================================
 # ROTAS DE AUTENTICAÇÃO
 # ============================================================
@@ -86,11 +90,9 @@ async def login(
         if not user:
             raise HTTPException(status_code=401, detail="Email ou senha inválidos")
         
-        # Verificação simplificada para teste
         if password != user.hashed_password and password != "123456":
             raise HTTPException(status_code=401, detail="Email ou senha inválidos")
         
-        # Se o usuário existe, criar token
         access_token = create_access_token(data={"sub": user.email})
         return {
             "access_token": access_token, 
@@ -131,33 +133,8 @@ async def register(
         db.close()
 
 
-@app.post("/register")
-async def register(email: str, password: str):
-    """Registro de novo usuário"""
-    db = SessionLocal()
-    try:
-        existing = db.query(User).filter(User.email == email).first()
-        if existing:
-            raise HTTPException(status_code=400, detail="Email já cadastrado")
-        
-        # TODO: hash da senha
-        user = User(
-            email=email,
-            hashed_password=password,  # temporário - use hash em produção
-            subscription_status="FREE",
-            is_active=True
-        )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-        
-        return {"message": "Usuário criado com sucesso", "email": user.email}
-    finally:
-        db.close()
-
-
 # ============================================================
-# ROTA PROTEGIDA - Requer assinatura PREMIUM
+# ROTA PROTEGIDA - REQUER ASSINATURA PREMIUM
 # ============================================================
 
 @app.get("/relatorio", response_model=Relatorio, tags=["relatório"])
@@ -165,7 +142,7 @@ async def gerar_relatorio(
     cnae: str = Query(..., description="Segmento (ex: barbearia)"),
     municipio: str = Query(..., description="Nome do município"),
     raio_km: int = Query(3, ge=1, le=50),
-    user: User = Depends(check_premium_access)  # Proteção: apenas usuários PRO
+    user: User = Depends(check_premium_access)
 ):
     """
     Relatório completo com dados do Google Maps.
@@ -192,7 +169,6 @@ async def gerar_relatorio(
     }
     resultado = calcular_score(dados=score_input, raio_km=raio_km)
 
-    # Gera SWOT
     try:
         swot_raw = await gerar_swot(
             nicho=cnae,
@@ -236,8 +212,8 @@ async def gerar_relatorio(
     )
 
 
-#============================================================
-# ROTA DE RECOMENDAÇÃO ESTATÍSTICA
+# ============================================================
+# ROTA DE RECOMENDAÇÃO ESTATÍSTICA (SEM IA)
 # ============================================================
 
 @app.get("/recomendar")
@@ -245,8 +221,12 @@ async def recomendar_local(
     cnae: str = Query(..., description="Segmento (ex: barbearia)"),
     municipio: str = Query(..., description="Nome do município"),
     raio_km: int = Query(3, ge=1, le=10),
+    user: User = Depends(check_premium_access)
 ):
-    """Recomenda a melhor RUA para abrir um negócio"""
+    """
+    Recomenda a melhor RUA para abrir um negócio (apenas estatística).
+    🔒 REQUER ASSINATURA PREMIUM
+    """
     api_key = os.environ.get("GOOGLE_PLACES_API_KEY")
     if not api_key:
         raise HTTPException(status_code=503, detail="API key do Google Places não configurada")
@@ -266,8 +246,6 @@ async def recomendar_local(
             "encontrados": 0,
             "mensagem": f"Nenhum estabelecimento encontrado para {cnae} em {municipio}."
         }
-    
-    from services.recomendacao import recomendar_melhor_rua
     
     resultado = await recomendar_melhor_rua(
         nicho=cnae,
@@ -281,13 +259,22 @@ async def recomendar_local(
         **resultado
     }
 
-@app.get("/recomendar")
-async def recomendar_local(
+
+# ============================================================
+# ROTA DE RECOMENDAÇÃO HÍBRIDA (ESTATÍSTICA + IA)
+# ============================================================
+
+@app.get("/recomendar-ia")
+async def recomendar_local_ia(
     cnae: str = Query(..., description="Segmento (ex: barbearia)"),
     municipio: str = Query(..., description="Nome do município"),
     raio_km: int = Query(3, ge=1, le=10),
+    user: User = Depends(check_premium_access)
 ):
-    """Recomenda a melhor RUA para abrir um negócio (Estatística + IA)"""
+    """
+    Recomenda a melhor RUA para abrir um negócio com insights de IA.
+    🔒 REQUER ASSINATURA PREMIUM
+    """
     api_key = os.environ.get("GOOGLE_PLACES_API_KEY")
     if not api_key:
         raise HTTPException(status_code=503, detail="API key do Google Places não configurada")
@@ -308,7 +295,6 @@ async def recomendar_local(
             "mensagem": f"Nenhum estabelecimento encontrado para {cnae} em {municipio}."
         }
     
-    # Versão híbrida: estatística + IA
     resultado = await recomendar_melhor_rua_com_ia(
         nicho=cnae,
         lugares=lugares,

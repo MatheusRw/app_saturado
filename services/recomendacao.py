@@ -19,6 +19,7 @@ def is_shopping_location(nome: str) -> bool:
     nome_lower = nome.lower()
     return any(keyword in nome_lower for keyword in SHOPPING_KEYWORDS)
 
+
 def extrair_nome_rua(endereco: str) -> str:
     """Extrai o nome da rua/avenida do endereço completo, identificando shoppings"""
     if not endereco:
@@ -42,6 +43,7 @@ def extrair_nome_rua(endereco: str) -> str:
         return rua.strip()
     
     return endereco[:40]
+
 
 # ============================================================
 # ESTRATÉGIAS POR SEGMENTO
@@ -123,6 +125,7 @@ DEFAULT_ESTRATEGIA = {
     "descricao": "Análise baseada em densidade e demanda local."
 }
 
+
 # ============================================================
 # CÁLCULO DE OPORTUNIDADE POR RUA
 # ============================================================
@@ -135,9 +138,10 @@ def calcular_oportunidade_rua(
     """
     Calcula o Índice de Oportunidade para uma rua específica.
     """
+    qtd = len(concorrentes)
+    
     # VALIDAÇÃO ESPECIAL: Shopping Center
     if is_shopping_location(nome_rua):
-        qtd = len(concorrentes)
         demanda_total = sum(c.get("num_avaliacoes", 0) for c in concorrentes)
         notas = [c.get("rating", 3.0) for c in concorrentes if c.get("rating")]
         nota_media = sum(notas) / len(notas) if notas else 3.0
@@ -147,21 +151,24 @@ def calcular_oportunidade_rua(
             "score": 15,
             "emoji": "🏬",
             "concorrentes": qtd,
-            "densidade_estimada": round(qtd / 0.5, 1),
+            "lista_concorrentes": [c.get("nome", "Sem nome")[:35] for c in concorrentes],
+            "densidade_estimada": round(qtd / 0.5, 1) if qtd > 0 else 0,
             "demanda_total": demanda_total,
             "nota_media": round(nota_media, 1),
             "distancia_media_km": None,
-            "recomendacao": f"⚠️ EVITE SHOPPINGS! {nome_rua} tem concorrência oculta (dezenas de restaurantes). Score baixo: 15/100.",
+            "recomendacao": f"⚠️ EVITE SHOPPINGS! {nome_rua} tem concorrência oculta. Score baixo: 15/100.",
             "estrategia": estrategia["tipo"],
             "descricao_estrategia": "Shoppings têm alta concorrência interna. Prefira ruas de fluxo natural."
         }
     
-    if not concorrentes:
+    # Caso sem concorrentes
+    if qtd == 0:
         return {
             "rua": nome_rua,
             "score": 100,
             "emoji": "🏆",
             "concorrentes": 0,
+            "lista_concorrentes": [],
             "densidade_estimada": 0,
             "demanda_total": 0,
             "nota_media": 0,
@@ -171,7 +178,7 @@ def calcular_oportunidade_rua(
             "descricao_estrategia": estrategia["descricao"]
         }
     
-    qtd = len(concorrentes)
+    # Cálculo para ruas com concorrentes
     densidade_estimada = qtd / 0.5
     densidade_ideal = estrategia.get("densidade_ideal", 1.0)
     
@@ -258,6 +265,7 @@ def calcular_oportunidade_rua(
         "score": score,
         "emoji": emoji,
         "concorrentes": qtd,
+        "lista_concorrentes": [c.get("nome", "Sem nome")[:35] for c in concorrentes],
         "densidade_estimada": round(densidade_estimada, 1),
         "demanda_total": demanda_total,
         "nota_media": round(nota_media, 1),
@@ -266,6 +274,7 @@ def calcular_oportunidade_rua(
         "estrategia": estrategia["tipo"],
         "descricao_estrategia": estrategia["descricao"]
     }
+
 
 # ============================================================
 # FUNÇÃO PRINCIPAL
@@ -283,6 +292,7 @@ async def recomendar_melhor_rua(
             "melhor_rua": None,
             "ranking": [],
             "total_ruas": 0,
+            "total_estabelecimentos": 0,
             "mensagem": "Nenhum estabelecimento encontrado para análise."
         }
     
@@ -326,6 +336,5 @@ async def recomendar_melhor_rua(
         "melhor_rua": melhor,
         "ranking": ranking[:10],
         "total_ruas_analisadas": len(ranking),
-        "total_estabelecimentos": len(lugares),
-        "usou_ia": False  # Flag para indicar que é apenas estatística
+        "total_estabelecimentos": len(lugares)
     }
